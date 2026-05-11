@@ -1,0 +1,13 @@
+[Unit]
+Description=Clemen
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/home/lux/clemen/target/release
+ExecStart=/home/lux/clemen/target/release/clemen
+Restart=always
+User=lux
+
+[Install]
+WantedBy=multi-user.target
