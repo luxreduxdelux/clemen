@@ -173,7 +173,7 @@ async fn handle_command(
         Command::Proponer(name) => {
             if let Some(user) = message.from {
                 if name.is_empty() {
-                    bot.send_message(message.chat.id, "Tenés que dar el nombre de la película. Ejemplo: `/proponer@clemen_dc_bot Rocky Horror Picture Show`")
+                    bot.send_message(message.chat.id, "Tenés que dar el nombre de la película. Ejemplo: /proponer@clemen_dc_bot Rocky Horror Picture Show")
                         .await?;
                 } else {
                     let mut state = state.lock().await;
@@ -243,6 +243,15 @@ async fn handle_message(
     message: Message,
     state: Arc<Mutex<State>>,
 ) -> ResponseResult<()> {
+    match message.chat.kind {
+        teloxide::types::ChatKind::Public(_) => {
+            if message.chat.id.0 != -1001296790112 {
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
+
     if let Some(text) = message.text() {
         if text.contains("youtube") || text.contains("youtu.be") && !text.contains("playlist") {
             for link in YouTube::get_link_list(text) {
