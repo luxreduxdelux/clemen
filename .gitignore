@@ -2,8 +2,8 @@
 # will have compiled files and executables
 debug/
 target/
-binary/
-out/
+clemen_binary/
+clemen_out/
 clemen.env
 clemen.json
 
