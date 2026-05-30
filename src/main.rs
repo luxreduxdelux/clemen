@@ -5,6 +5,10 @@ use std::time::Duration;
 use teloxide::types::InputPollOption;
 use teloxide::utils::command::BotCommands;
 use teloxide::{prelude::*, types::InputFile};
+use tmdb_api::client::Client;
+use tmdb_api::client::reqwest::ReqwestExecutor;
+use tmdb_api::movie::search::MovieSearch;
+use tmdb_api::prelude::Command;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 use yt_dlp::{Downloader, model::Video};
@@ -26,6 +30,7 @@ impl Proposal {
 struct State {
     data: Data,
     tube: YouTube,
+    tmdb: Client<ReqwestExecutor>,
 }
 
 impl State {
@@ -33,6 +38,7 @@ impl State {
         Ok(Self {
             data: Data::default(),
             tube: YouTube::new().await?,
+            tmdb: Client::<ReqwestExecutor>::new(include_str!("../clemen_tmdb.env").to_string()),
         })
     }
 }
@@ -178,8 +184,9 @@ impl YouTube {
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
-enum Command {
+enum BotCommand {
     Proponer(String),
+    Sinopsis(String),
     Cola,
     Votar,
     Vivo,
@@ -188,11 +195,11 @@ enum Command {
 async fn handle_command(
     bot: Bot,
     message: Message,
-    command: Command,
+    command: BotCommand,
     state: Arc<Mutex<State>>,
 ) -> ResponseResult<()> {
     match command {
-        Command::Proponer(name) => {
+        BotCommand::Proponer(name) => {
             if let Some(user) = message.from {
                 if name.is_empty() {
                     bot.send_message(message.chat.id, "Tenés que dar el nombre de la película. Ejemplo: /proponer@clemen_dc_bot Rocky Horror Picture Show")
@@ -216,7 +223,38 @@ async fn handle_command(
                 }
             }
         }
-        Command::Cola => {
+        BotCommand::Sinopsis(name) => {
+            if name.is_empty() {
+                bot.send_message(message.chat.id, "Tenés que dar el nombre de la película. Ejemplo: /sinopsis@clemen_dc_bot Rocky Horror Picture Show")
+                        .await?;
+            } else {
+                if let Ok(result) = MovieSearch::new(name.into())
+                    .execute(&state.lock().await.tmdb)
+                    .await
+                {
+                    if let Some(movie) = result.results.first() {
+                        bot.send_message(
+                            message.chat.id,
+                            format!(
+                                "{} • ({})\n\n{}\n\nhttps://www.themoviedb.org/movie/{}",
+                                movie.inner.title,
+                                movie.inner.release_date.unwrap_or_default(),
+                                movie.inner.overview,
+                                movie.inner.id
+                            ),
+                        )
+                        .await?;
+                    } else {
+                        bot.send_message(
+                            message.chat.id,
+                            "No encontré ningún resultado para esa película.",
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
+        BotCommand::Cola => {
             let queue = state.lock().await.data.queue.clone();
             let mut text = String::default();
 
@@ -231,7 +269,7 @@ async fn handle_command(
                 bot.send_message(message.chat.id, text).await?;
             }
         }
-        Command::Votar => {
+        BotCommand::Votar => {
             if let Some(user) = message.from {
                 if user.id.0 == Data::VOTE_USER {
                     let queue = state.lock().await.data.clear();
@@ -249,6 +287,9 @@ async fn handle_command(
                             .await?;
                     } else {
                         bot.send_poll(message.chat.id, "Vota la próxima película!", vote)
+                            .type_(teloxide::types::PollType::Regular)
+                            .is_anonymous(false)
+                            .allows_multiple_answers(true)
                             .await?;
                     }
                 } else {
@@ -260,7 +301,7 @@ async fn handle_command(
                 }
             }
         }
-        Command::Vivo => {
+        BotCommand::Vivo => {
             bot.send_message(message.chat.id, "Acá estoy.").await?;
         }
     }
@@ -373,7 +414,7 @@ async fn main() -> anyhow::Result<()> {
     let handler = Update::filter_message()
         .branch(
             dptree::entry()
-                .filter_command::<Command>()
+                .filter_command::<BotCommand>()
                 .endpoint(handle_command),
         )
         .branch(dptree::endpoint(handle_message));
