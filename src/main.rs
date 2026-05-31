@@ -186,6 +186,7 @@ impl YouTube {
 #[command(rename_rule = "lowercase")]
 enum BotCommand {
     Proponer(String),
+    Desproponer(String),
     Sinopsis(String),
     Cola,
     Votar,
@@ -218,6 +219,30 @@ async fn handle_command(
                                 "Ya está en la cola, me estás gargando",
                             )
                             .await?;
+                        }
+                    }
+                }
+            }
+        }
+        BotCommand::Desproponer(name) => {
+            if let Some(user) = message.from {
+                if name.is_empty() {
+                    bot.send_message(message.chat.id, "Tenés que dar el nombre de la película. Ejemplo: /desproponer@clemen_dc_bot Rocky Horror Picture Show")
+                        .await?;
+                } else {
+                    let mut state = state.lock().await;
+
+                    for (i, proposal) in state.data.queue.iter().enumerate() {
+                        if proposal.name == name {
+                            if user.full_name() == proposal.user {
+                                state.data.queue.remove(i);
+                                state.data.save();
+                                bot.send_message(message.chat.id, "Lo desanotubi").await?;
+                            } else {
+                                bot.send_message(message.chat.id, "Me estás gargando...no propusiste esa película vos. 🍅la de acá")
+                                    .await?;
+                            }
+                            break;
                         }
                     }
                 }
