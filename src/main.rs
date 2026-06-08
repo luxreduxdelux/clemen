@@ -1,8 +1,9 @@
+use chrono::{DateTime, Local};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
-use teloxide::types::InputPollOption;
+use std::time::{Duration, Instant};
+use teloxide::types::{InputPollOption, MessageId, Recipient};
 use teloxide::utils::command::BotCommands;
 use teloxide::{prelude::*, types::InputFile};
 use tmdb_api::client::Client;
@@ -14,18 +15,6 @@ use tokio::time::timeout;
 use yt_dlp::{Downloader, model::Video};
 
 //================================================================
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct Proposal {
-    name: String,
-    user: String,
-}
-
-impl Proposal {
-    fn new(name: String, user: String) -> Self {
-        Self { name, user }
-    }
-}
 
 struct State {
     data: Data,
@@ -44,7 +33,23 @@ impl State {
 }
 
 #[derive(Serialize, Deserialize)]
+struct Upload {
+    message: i32,
+    time: DateTime<Local>,
+}
+
+impl Upload {
+    fn new(message: i32) -> Self {
+        Self {
+            message,
+            time: Local::now(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 struct Data {
+    music: Vec<Upload>,
     queue: Vec<Proposal>,
 }
 
@@ -54,6 +59,7 @@ impl Default for Data {
             serde_json::from_str(&data).expect("Couldn't deserialize clemen.json.")
         } else {
             Data {
+                music: Vec::default(),
                 queue: Vec::default(),
             }
         }
@@ -63,6 +69,8 @@ impl Default for Data {
 impl Data {
     const VOTE_USER: u64 = 1511061836;
     const FILE_PATH: &str = "clemen.json";
+    const CHANNEL_MUSIC: i64 = -1001296790112;
+    const CHANNEL_DEBUG: i64 = -5131002770;
 
     fn add(&mut self, name: String, user: String) -> bool {
         for p in &self.queue {
@@ -84,9 +92,47 @@ impl Data {
         queue
     }
 
+    fn add_upload(&mut self, upload: Upload) {
+        self.clean_upload();
+        self.music.push(upload);
+        self.save();
+    }
+
+    fn clean_upload(&mut self) {
+        let time = Local::now().date_naive();
+        self.music
+            .retain(|upload| (time - upload.time.date_naive()).num_days() <= 29);
+    }
+
+    fn upload_range(&mut self, range: i64) -> Vec<MessageId> {
+        self.clean_upload();
+        let mut result = Vec::new();
+        let time = Local::now().date_naive();
+
+        for upload in &self.music {
+            if (time - upload.time.date_naive()).num_days() <= range {
+                result.push(MessageId(upload.message));
+            }
+        }
+
+        result
+    }
+
     fn save(&self) {
-        let data = serde_json::to_string(self).expect("Couldn't serialize clemen.json");
+        let data = serde_json::to_string_pretty(self).expect("Couldn't serialize clemen.json");
         std::fs::write(Self::FILE_PATH, data).expect("Couldn't save clemen.json.");
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct Proposal {
+    name: String,
+    user: String,
+}
+
+impl Proposal {
+    fn new(name: String, user: String) -> Self {
+        Self { name, user }
     }
 }
 
@@ -190,6 +236,9 @@ enum BotCommand {
     Sinopsis(String),
     Cola,
     Votar,
+    Dia,
+    Semana,
+    Mes,
     Vivo,
 }
 
@@ -326,6 +375,45 @@ async fn handle_command(
                 }
             }
         }
+        BotCommand::Dia => {
+            if let Some(user) = message.from {
+                let list = state.lock().await.data.upload_range(0);
+
+                if list.is_empty() {
+                    bot.send_message(user.id, "No hay ninguna canción subida hoy.")
+                        .await?;
+                } else {
+                    bot.forward_messages(user.id, Recipient::Id(ChatId(Data::CHANNEL_MUSIC)), list)
+                        .await?;
+                }
+            }
+        }
+        BotCommand::Semana => {
+            if let Some(user) = message.from {
+                let list = state.lock().await.data.upload_range(6);
+
+                if list.is_empty() {
+                    bot.send_message(user.id, "No hay ninguna canción subida esta semana.")
+                        .await?;
+                } else {
+                    bot.forward_messages(user.id, Recipient::Id(ChatId(Data::CHANNEL_MUSIC)), list)
+                        .await?;
+                }
+            }
+        }
+        BotCommand::Mes => {
+            if let Some(user) = message.from {
+                let list = state.lock().await.data.upload_range(29);
+
+                if list.is_empty() {
+                    bot.send_message(user.id, "No hay ninguna canción subida este mes.")
+                        .await?;
+                } else {
+                    bot.forward_messages(user.id, Recipient::Id(ChatId(Data::CHANNEL_MUSIC)), list)
+                        .await?;
+                }
+            }
+        }
         BotCommand::Vivo => {
             bot.send_message(message.chat.id, "Acá estoy.").await?;
         }
@@ -334,18 +422,17 @@ async fn handle_command(
     Ok(())
 }
 
+// false positive.
+#[allow(clippy::collapsible_if)]
 async fn handle_message(
     bot: Bot,
     message: Message,
     state: Arc<Mutex<State>>,
 ) -> ResponseResult<()> {
-    match message.chat.kind {
-        teloxide::types::ChatKind::Public(_) => {
-            if message.chat.id.0 != -1001296790112 {
-                return Ok(());
-            }
-        }
-        _ => {}
+    if let teloxide::types::ChatKind::Public(_) = message.chat.kind
+        && message.chat.id.0 != Data::CHANNEL_MUSIC
+    {
+        return Ok(());
     }
 
     if let Some(text) = message.text() {
@@ -354,14 +441,18 @@ async fn handle_message(
                 let split: Vec<&str> = link.split("&").collect();
                 let text = split.first().unwrap();
 
-                bot.send_message(ChatId(-5131002770), format!("Downloading URL: \n\n{text}"))
-                    .await?;
+                bot.send_message(
+                    ChatId(Data::CHANNEL_DEBUG),
+                    format!("Downloading URL: \n\n{text}"),
+                )
+                .await?;
 
                 for x in 0..3 {
-                    let state = state.lock().await;
-
-                    let download =
-                        timeout(Duration::from_secs(20), state.tube.download(text)).await;
+                    let download = timeout(
+                        Duration::from_secs(20),
+                        state.lock().await.tube.download(text),
+                    )
+                    .await;
 
                     if let Ok(download) = download {
                         match download {
@@ -370,32 +461,47 @@ async fn handle_message(
                                 let (artist, track, _) = YouTube::try_artist_track(&video);
 
                                 bot.send_message(
-                                    ChatId(-5131002770),
+                                    ChatId(Data::CHANNEL_DEBUG),
                                     format!(
                                         "Video download done. Sending as \"{artist} - {track:?}\"."
                                     ),
                                 )
                                 .await?;
 
-                                let message =
+                                let bot_upload =
                                     bot.send_audio(message.chat.id, InputFile::file(title));
 
-                                let message = if let Some(track) = track {
-                                    message.title(track).performer(artist)
+                                let upload = if let Some(track) = track {
+                                    bot_upload.title(track).performer(artist)
                                 } else {
-                                    message.title(artist)
+                                    bot_upload.title(artist)
                                 };
 
-                                if (timeout(Duration::from_secs(20), message).await).is_ok() {
-                                    bot.send_message(ChatId(-5131002770), "Video upload done.")
-                                        .await?;
+                                if let Ok(Ok(bot_upload)) =
+                                    timeout(Duration::from_secs(20), upload).await
+                                {
+                                    bot.send_message(
+                                        ChatId(Data::CHANNEL_DEBUG),
+                                        "Video upload done.",
+                                    )
+                                    .await?;
+
+                                    if let teloxide::types::ChatKind::Public(_) = message.chat.kind
+                                        && message.chat.id.0 == Data::CHANNEL_MUSIC
+                                    {
+                                        state
+                                            .lock()
+                                            .await
+                                            .data
+                                            .add_upload(Upload::new(bot_upload.id.0));
+                                    }
 
                                     std::fs::remove_file(title).unwrap();
 
                                     break;
                                 } else {
                                     bot.send_message(
-                                        ChatId(-5131002770),
+                                        ChatId(Data::CHANNEL_DEBUG),
                                         format!("TG time-out error (#{x}) for URL: \n\n{text}"),
                                     )
                                     .await?;
@@ -405,7 +511,7 @@ async fn handle_message(
                             }
                             Err(error) => {
                                 bot.send_message(
-                                    ChatId(-5131002770),
+                                    ChatId(Data::CHANNEL_DEBUG),
                                     format!("YT download error (#{x}): \n\n{error:?}"),
                                 )
                                 .await?;
@@ -415,7 +521,7 @@ async fn handle_message(
                         }
                     } else {
                         bot.send_message(
-                            ChatId(-5131002770),
+                            ChatId(Data::CHANNEL_DEBUG),
                             format!("YT time-out error (#{x}) for URL: \n\n{text}"),
                         )
                         .await?;
