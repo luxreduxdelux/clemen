@@ -1,9 +1,10 @@
 use chrono::{DateTime, Local};
+use lastfm_client::LastFmClient;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use teloxide::types::{InputPollOption, MessageId, Recipient};
+use teloxide::types::{InputPollOption, MessageId, ParseMode, Recipient};
 use teloxide::utils::command::BotCommands;
 use teloxide::{prelude::*, types::InputFile};
 use tmdb_api::client::Client;
@@ -20,6 +21,7 @@ struct State {
     data: Data,
     tube: YouTube,
     tmdb: Client<ReqwestExecutor>,
+    last: LastFmClient,
 }
 
 impl State {
@@ -28,6 +30,11 @@ impl State {
             data: Data::default(),
             tube: YouTube::new().await?,
             tmdb: Client::<ReqwestExecutor>::new(include_str!("../clemen_tmdb.env").to_string()),
+            last: LastFmClient::builder()
+                .api_key(include_str!("../clemen_last.env"))
+                .timeout(Duration::from_secs(60))
+                .max_concurrent_requests(5)
+                .build_client()?,
         })
     }
 }
@@ -239,6 +246,10 @@ enum BotCommand {
     Dia,
     Semana,
     Mes,
+    LastUsuario(String),
+    CancionSemanal(String),
+    ArtistaSemanal(String),
+    AlbumSemanal(String),
     Vivo,
 }
 
@@ -410,6 +421,134 @@ async fn handle_command(
                         .await?;
                 } else {
                     bot.forward_messages(user.id, Recipient::Id(ChatId(Data::CHANNEL_MUSIC)), list)
+                        .await?;
+                }
+            }
+        }
+        BotCommand::LastUsuario(name) => {
+            if name.is_empty() {
+                bot.send_message(message.chat.id, "Tenés que dar el nombre del usuario. Ejemplo: /lastusuario@clemen_dc_bot luxreduxdelux")
+                        .await?;
+            } else {
+                let last = &state.lock().await.last;
+
+                if let Ok(user) = last.user_info(name).fetch().await {
+                    bot.send_message(
+                        message.chat.id,
+                        format!(
+                            r#"<a href="{}">{}</a> - {} scrobbles"#,
+                            user.url, user.name, user.play_count,
+                        ),
+                    )
+                    .parse_mode(ParseMode::Html)
+                    .await?;
+                } else {
+                    bot.send_message(message.chat.id, "No hay ningún usuario con ese nombre.")
+                        .await?;
+                }
+            }
+        }
+        BotCommand::CancionSemanal(name) => {
+            if name.is_empty() {
+                bot.send_message(message.chat.id, "Tenés que dar el nombre del usuario. Ejemplo: /cancionsemanal@clemen_dc_bot luxreduxdelux")
+                        .await?;
+            } else {
+                let last = &state.lock().await.last;
+
+                if let Ok(user) = last.weekly_chart_list(&name).fetch().await {
+                    if let Some(range) = user.last()
+                        && let Ok(list) = last.weekly_track_chart(name).range(range).fetch().await
+                    {
+                        let mut result = String::new();
+
+                        for i in list {
+                            if i.rank > 10 {
+                                break;
+                            }
+
+                            result.push_str(&format!(
+                                r#"{}. <a href="{}">{}</a> - {} reproducciones"#,
+                                i.rank, i.url, i.name, i.playcount
+                            ));
+                            result.push('\n');
+                        }
+
+                        bot.send_message(message.chat.id, result)
+                            .parse_mode(ParseMode::Html)
+                            .await?;
+                    }
+                } else {
+                    bot.send_message(message.chat.id, "No hay ningún usuario con ese nombre.")
+                        .await?;
+                }
+            }
+        }
+        BotCommand::ArtistaSemanal(name) => {
+            if name.is_empty() {
+                bot.send_message(message.chat.id, "Tenés que dar el nombre del usuario. Ejemplo: /artistasemanal@clemen_dc_bot luxreduxdelux")
+                        .await?;
+            } else {
+                let last = &state.lock().await.last;
+
+                if let Ok(user) = last.weekly_chart_list(&name).fetch().await {
+                    if let Some(range) = user.last()
+                        && let Ok(list) = last.weekly_artist_chart(name).range(range).fetch().await
+                    {
+                        let mut result = String::new();
+
+                        for i in list {
+                            if i.rank > 10 {
+                                break;
+                            }
+
+                            result.push_str(&format!(
+                                r#"{}. <a href="{}">{}</a> - {} reproducciones"#,
+                                i.rank, i.url, i.name, i.playcount
+                            ));
+                            result.push('\n');
+                        }
+
+                        bot.send_message(message.chat.id, result)
+                            .parse_mode(ParseMode::Html)
+                            .await?;
+                    }
+                } else {
+                    bot.send_message(message.chat.id, "No hay ningún usuario con ese nombre.")
+                        .await?;
+                }
+            }
+        }
+        BotCommand::AlbumSemanal(name) => {
+            if name.is_empty() {
+                bot.send_message(message.chat.id, "Tenés que dar el nombre del usuario. Ejemplo: /albumsemanal@clemen_dc_bot luxreduxdelux")
+                        .await?;
+            } else {
+                let last = &state.lock().await.last;
+
+                if let Ok(user) = last.weekly_chart_list(&name).fetch().await {
+                    if let Some(range) = user.last()
+                        && let Ok(list) = last.weekly_album_chart(name).range(range).fetch().await
+                    {
+                        let mut result = String::new();
+
+                        for i in list {
+                            if i.rank > 10 {
+                                break;
+                            }
+
+                            result.push_str(&format!(
+                                r#"{}. <a href="{}">{}</a> - {} reproducciones"#,
+                                i.rank, i.url, i.name, i.playcount
+                            ));
+                            result.push('\n');
+                        }
+
+                        bot.send_message(message.chat.id, result)
+                            .parse_mode(ParseMode::Html)
+                            .await?;
+                    }
+                } else {
+                    bot.send_message(message.chat.id, "No hay ningún usuario con ese nombre.")
                         .await?;
                 }
             }
