@@ -670,6 +670,16 @@ async fn handle_message(
                 }
             }
         }
+    } else if message.audio().is_some() {
+        if let teloxide::types::ChatKind::Public(_) = message.chat.kind
+            && message.chat.id.0 == Data::CHANNEL_MUSIC
+        {
+            state
+                .lock()
+                .await
+                .data
+                .add_upload(Upload::new(message.id.0));
+        }
     }
 
     Ok(())
