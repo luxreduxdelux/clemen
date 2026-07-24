@@ -3,7 +3,7 @@ use lastfm_client::LastFmClient;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use teloxide::types::{InputPollOption, MessageId, ParseMode, Recipient};
 use teloxide::utils::command::BotCommands;
 use teloxide::{prelude::*, types::InputFile};
@@ -617,7 +617,7 @@ async fn handle_message(
                                 };
 
                                 if let Ok(Ok(bot_upload)) =
-                                    timeout(Duration::from_secs(20), upload).await
+                                    timeout(Duration::from_secs(120), upload).await
                                 {
                                     bot.send_message(
                                         ChatId(Data::CHANNEL_DEBUG),
