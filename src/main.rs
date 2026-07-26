@@ -77,7 +77,7 @@ impl Data {
     const VOTE_USER: u64 = 1511061836;
     const FILE_PATH: &str = "clemen.json";
     const CHANNEL_MUSIC: i64 = -1001296790112;
-    const CHANNEL_DEBUG: i64 = -5131002770;
+    const CHANNEL_DEBUG: i64 = -1003792156195;
 
     fn add(&mut self, name: String, user: String) -> bool {
         for p in &self.queue {
