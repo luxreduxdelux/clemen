@@ -588,7 +588,7 @@ async fn handle_message(
 
                 for x in 0..3 {
                     let download = timeout(
-                        Duration::from_secs(20),
+                        Duration::from_secs(300),
                         state.lock().await.tube.download(text),
                     )
                     .await;
@@ -617,7 +617,7 @@ async fn handle_message(
                                 };
 
                                 if let Ok(Ok(bot_upload)) =
-                                    timeout(Duration::from_secs(120), upload).await
+                                    timeout(Duration::from_secs(300), upload).await
                                 {
                                     bot.send_message(
                                         ChatId(Data::CHANNEL_DEBUG),
@@ -687,7 +687,12 @@ async fn handle_message(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let bot = Bot::new(include_str!("../clemen.env"));
+    let client = tmdb_api::reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(300))
+        .build()?;
+
+    let bot = Bot::with_client(include_str!("../clemen.env"), client);
 
     let state = Arc::new(Mutex::new(State::new().await?));
 
