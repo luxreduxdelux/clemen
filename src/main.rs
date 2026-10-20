@@ -160,41 +160,31 @@ impl YouTube {
     async fn download(&self, link: &str) -> anyhow::Result<Video> {
         let video = self.downloader.fetch_video_infos(link).await?;
 
-        if self
-            .downloader
-            .download_audio_stream_with_quality(
-                &video,
-                "audio.mp3",
-                yt_dlp::model::AudioQuality::Medium,
-                yt_dlp::model::AudioCodecPreference::Any,
-            )
-            .await
-            .is_err()
-        {
+        // I think a YouTube update made it so no YouTube Music video actually
+        // has a video stream so it broke download_video_with_quality, so do this
+        // check to see if it's a YTM video and only download the audio stream
+        if Self::try_artist_track(&video).2 {
+            self.downloader
+                .download_audio_stream_with_quality(
+                    &video,
+                    "audio.mp4",
+                    //yt_dlp::model::VideoQuality::Worst,
+                    //yt_dlp::model::VideoCodecPreference::Any,
+                    yt_dlp::model::AudioQuality::Best,
+                    yt_dlp::model::AudioCodecPreference::Any,
+                )
+                .await?;
+        } else {
             self.downloader
                 .download_video_with_quality(
                     &video,
                     "audio.mp4",
                     yt_dlp::model::VideoQuality::Worst,
                     yt_dlp::model::VideoCodecPreference::Any,
-                    yt_dlp::model::AudioQuality::Medium,
+                    yt_dlp::model::AudioQuality::Best,
                     yt_dlp::model::AudioCodecPreference::Any,
                 )
                 .await?;
-
-            let _output = std::process::Command::new("ffmpeg")
-                .args([
-                    "-i",
-                    "clemen_out/audio.mp4",
-                    "-vn",
-                    "-acodec",
-                    "copy",
-                    "clemen_out/audio.mp3",
-                ])
-                .output()
-                .expect("download: could not run ffmpeg command");
-
-            std::fs::remove_file("clemen_out/audio.mp4").unwrap();
         }
 
         Ok(video)
@@ -598,7 +588,7 @@ async fn handle_message(
 
                 for x in 0..3 {
                     let download = timeout(
-                        Duration::from_secs(120),
+                        Duration::from_secs(20),
                         state.lock().await.tube.download(text),
                     )
                     .await;
@@ -606,7 +596,7 @@ async fn handle_message(
                     if let Ok(download) = download {
                         match download {
                             Ok(video) => {
-                                let title = "clemen_out/audio.mp3";
+                                let title = "clemen_out/audio.mp4";
                                 let (artist, track, _) = YouTube::try_artist_track(&video);
 
                                 bot.send_message(
@@ -697,12 +687,7 @@ async fn handle_message(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let client = tmdb_api::reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(300))
-        .build()?;
-
-    let bot = Bot::with_client(include_str!("../clemen.env"), client);
+    let bot = Bot::new(include_str!("../clemen.env"));
 
     let state = Arc::new(Mutex::new(State::new().await?));
 
